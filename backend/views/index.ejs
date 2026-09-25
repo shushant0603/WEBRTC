@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title><%= title %></title>
+  </head>
+  <body>
+    <main>
+      <button id="createOffer">
+    Create Offer
+</button>
+
+<hr>
+
+<div id="messages"></div>
+
+<div>
+    <input
+        id="messageInput"
+        type="text"
+        placeholder="Type a message..."
+    />
+
+    <button id="sendMessage">
+        Send
+    </button>
+</div>
+</div>
+    </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/public/js/client.js"></script>
+  </body>
+</html>
