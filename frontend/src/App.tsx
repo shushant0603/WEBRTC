@@ -1,28 +1,59 @@
 import { useEffect, useRef, useState } from 'react';
-import { createSignaling, type ChatMessage } from './WebRTC/Signaling';
+import type { ChatMessage } from './realtime/DataChannel';
+import { DrawingCanvas, type DrawingCanvasHandle, type DrawingStroke } from './realtime/DrawingCanvas';
+import { SignalingManager } from './realtime/signaling/signalingManager';
+import { WebRTCManager } from './realtime/webRTCmanager/webRTCmanager';
 import './App.css';
 
 function App() {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState('Connecting...');
-  const signaling = useRef<ReturnType<typeof createSignaling> | null>(null);
+  const [peers, setPeers] = useState<string[]>([]);
+  const [peerStatuses, setPeerStatuses] = useState<Record<string, string>>({});
+  const [selectedPeer, setSelectedPeer] = useState<string | null>(null);
+  const [connectionRequests, setConnectionRequests] = useState<string[]>([]);
+  const webRTC = useRef<WebRTCManager | null>(null);
+  const canvasRef = useRef<DrawingCanvasHandle>(null);
 
   useEffect(() => {
-    signaling.current = createSignaling('room1', {
-      onMessage: (nextMessage) => setMessages((current) => [...current, nextMessage]),
-      onStatus: setStatus,
-    });
+    const manager = new WebRTCManager(
+      new SignalingManager(import.meta.env.VITE_API_URL ?? 'http://localhost:3000'),
+      {
+        dataChannel: {
+          onMessage: (nextMessage) => setMessages((current) => [...current, nextMessage]),
+          onDrawing: (stroke) => canvasRef.current?.drawRemoteStroke(stroke),
+          onStatus: setStatus,
+        },
+        onStatus: setStatus,
+        onConnectionRequest: (peerId) => {
+          setConnectionRequests((current) => current.includes(peerId) ? current : [...current, peerId]);
+        },
+        onPeers: (peerIds) => {
+          setPeers(peerIds);
+          setSelectedPeer((current) => current && peerIds.includes(current) ? current : peerIds[0] ?? null);
+        },
+        onPeerStatus: (peerId, nextStatus) => {
+          setPeerStatuses((current) => ({ ...current, [peerId]: nextStatus }));
+        },
+      },
+    );
+    webRTC.current = manager;
+    manager.connect('room1');
 
-    return () => signaling.current?.cleanup();
+    return () => manager.close();
   }, []);
+
+  const sendDrawing = (stroke: DrawingStroke) => {
+    if (selectedPeer) webRTC.current?.sendDrawing(selectedPeer, stroke);
+  };
 
   const sendMessage = () => {
     const value = message.trim();
 
     if (!value) return;
 
-    if (signaling.current?.sendMessage(value)) setMessage('');
+    if (selectedPeer && webRTC.current?.sendMessage(selectedPeer, value)) setMessage('');
   };
 
   return (
@@ -36,17 +67,69 @@ function App() {
           <span className="status">{status}</span>
         </header>
 
-        <button className="offer-button" type="button" onClick={() => signaling.current?.createOffer()}>
+        <div className="peers">
+          <h2>People in room</h2>
+          {peers.length === 0 ? (
+            <p className="empty-state">Waiting for people to join.</p>
+          ) : (
+            peers.map((peerId) => (
+              <button
+                className={`peer-row ${selectedPeer === peerId ? 'peer-row-selected' : ''}`}
+                key={peerId}
+                type="button"
+                onClick={() => setSelectedPeer(peerId)}
+              >
+                <span>{peerId}</span>
+                <small>{peerStatuses[peerId] ?? 'Available'}</small>
+              </button>
+            ))
+          )}
+        </div>
+
+        <button
+          className="offer-button"
+          type="button"
+          disabled={!selectedPeer}
+          onClick={() => selectedPeer && void webRTC.current?.startConnection(selectedPeer)}
+        >
           Create Offer
         </button>
+
+        {connectionRequests.map((peerId) => (
+          <div className="connection-request" key={peerId} role="alert">
+            <div>
+              <strong>Incoming connection request</strong>
+              <span>Peer {peerId} wants to connect.</span>
+            </div>
+            <button
+              className="accept-button"
+              type="button"
+              onClick={() => {
+                void webRTC.current?.acceptOffer(peerId);
+                setConnectionRequests((current) => current.filter((id) => id !== peerId));
+                setSelectedPeer(peerId);
+              }}
+            >
+              Accept
+            </button>
+          </div>
+        ))}
+
+        <div className="canvas-heading">
+          <h2>Shared canvas</h2>
+          <button className="clear-button" type="button" onClick={() => canvasRef.current?.clear()}>
+            Clear
+          </button>
+        </div>
+        <DrawingCanvas ref={canvasRef} onStroke={sendDrawing} />
 
         <div className="messages" aria-live="polite">
           {messages.length === 0 ? (
             <p className="empty-state">No messages yet. Connect to a peer to begin.</p>
           ) : (
             messages.map((item) => (
-              <p className={`message ${item.sender === 'You' ? 'message-you' : ''}`} key={item.id}>
-                <strong>{item.sender}</strong> {item.text}
+              <p className={`message ${item.sender === 'You' ? 'message-you' : ''}`} key={`${item.peerId ?? 'local'}-${item.id}`}>
+                <strong>{item.sender}</strong>{item.peerId ? ` (${item.peerId})` : ''} {item.text}
               </p>
             ))
           )}

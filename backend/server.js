@@ -49,7 +49,7 @@ io.on('connection', (socket) => {
     // JOIN ROOM
     // =================================================
 
-    socket.on('join-room', (roomId) => {
+    socket.on('join-room', async (roomId) => {
         if (typeof roomId !== 'string' || !roomId.trim()) {
             return;
         }
@@ -62,16 +62,15 @@ io.on('connection', (socket) => {
 
 
         socket.data.roomId = roomId;
-        socket.join(roomId);
+        await socket.join(roomId);
 
-
-        // Tell existing users that a new user joined
-        socket.to(roomId).emit(
-            "user-joined",
-            {
-                userId: socket.id
-            }
-        );
+        const roomSockets = await io.in(roomId).fetchSockets();
+        const peerIds = roomSockets.map((peer) => peer.id);
+        peerIds.forEach((peerId) => {
+            io.to(peerId).emit('room-peers', {
+                peerIds: peerIds.filter((id) => id !== peerId)
+            });
+        });
 
     });
 
@@ -179,7 +178,7 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
 
         if (socket.data.roomId) {
-            socket.to(socket.data.roomId).emit('peer-left');
+            socket.to(socket.data.roomId).emit('peer-left', { userId: socket.id });
         }
 
         console.log(
